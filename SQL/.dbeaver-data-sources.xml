@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<data-sources>
+	<data-source id="db2_iseries-15e1026029e-6655f48e265b20c0" provider="generic" driver="db2_iseries" name="CAS036 - EPIXPROD" save-password="true" show-system-objects="true" read-only="false">
+		<connection host="cas036.cascades.com" server="" database="EPIXPROD CDTA038" url="jdbc:as400://cas036.cascades.com;libraries=EPIXPROD CDTA038;" user="u038pbel" password="PiU1GWhqHU9l8w==" type="prod">
+			<property name="translate binary" value="true"/>
+			<property name="naming" value="sql"/>
+			<network-handler type="TUNNEL" id="ssh_tunnel" enabled="false" save-password="false">
+				<property name="sshConnectTimeout" value="10000"/>
+				<property name="authType" value="PASSWORD"/>
+				<property name="port" value="22"/>
+			</network-handler>
+			<network-handler type="PROXY" id="socks_proxy" enabled="false" save-password="false">
+				<property name="socks-port" value="1080"/>
+			</network-handler>
+			<bootstrap defaultObject="EPIXPROD"/>
+		</connection>
+		<filters>
+			<filter type="org.jkiss.dbeaver.model.struct.rdb.DBSSchema">
+				<include name="*"/>
+			</filter>
+			<filter type="org.jkiss.dbeaver.ext.generic.model.GenericTable" id="CDTA038">
+				<include name="MA*"/>
+			</filter>
+		</filters>
+		<virtual-meta-data>
+			<container name="model">
+				<container name="EPIXPROD">
+					<entity name="SGTRAVP" description="Remarque [DFA7NA]"/>
+				</container>
+			</container>
+		</virtual-meta-data>
+	</data-source>
+</data-sources>

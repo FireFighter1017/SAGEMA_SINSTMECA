@@ -1,0 +1,14 @@
+---
+title: "codeimport_test"
+author: "Pascal Bellerose"
+date: "July 4, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::read_chunk('WOHistory.R')
+```
+
+```{r init}
+```

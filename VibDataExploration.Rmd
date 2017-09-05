@@ -1,0 +1,219 @@
+---
+title: "Statistiques des heurs travaillées"
+author: "Pascal Bellerose"
+date: "June 8, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=F}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+options(java.parameters = "-Xmx8G")
+library(RODBC)
+library(RJDBC)
+library(dplyr)
+library(readr)
+library(stringr)
+library(manipulate)
+library(ggplot2)
+```
+
+
+```{r remoteload, cache=T, echo=F}
+## Save current working directory
+pwd = getwd()
+## Set working directory to the script's current directory
+wd = setwd(".")
+
+## Connect to Database and load data
+dbname = 'CAS036.cascades.com;'
+libname = 'EPIXPROD CDTA038;'
+drvclass = "com.ibm.as400.access.AS400JDBCDriver"
+classloc = "C:/Program Files (x86)/IBM/Client Access/jt400/lib/jt400.jar"
+drv = JDBC(drvclass, classloc)
+connURL = paste('jdbc:as400://',
+                dbname, 
+                'libraries=', libname, 
+                'translate binary=true;',
+                sep='')
+cx = dbConnect(drv, connURL, 'u038pbel','SEitl038')
+# cx <- odbcDriverConnect(paste("DRIVER=iSeries Access ODBC Driver;",
+#                               "SYSTEM=", dbname, ";",
+#                               "DBQ=", libname, ";",
+#                               "uid=", usr, ";",
+#                               "Password=", pwd, ";", sep=""))
+sqlcmd = read_file("U:/pbellerose/~PBELLEROSE/pbellerose/2009-02-25/Mes documents/~WinSQL/SAGE/WorkedHoursHistory.sql")
+# dta <- sqlQuery(cx, sqlcmd)
+dta = dbGetQuery(cx, sqlcmd)
+write_csv(dta, "WorkedHours_038_2010_2016.csv")
+dbDisconnect(cx)
+```
+
+
+```{r dependson=remoteload, echo=FALSE}
+## Filter data as per requirements
+##dta = subset(dta, TYPE %in% c("C3","M3","D3","P","PA","CA","MA"))
+dta = subset(dta, SHOP %in% c("SELEC ","SINST ") & TRADE %in% c("MECA  ","MOTEUR"))
+dta = subset(dta, YR %in% c(2012:2016))
+``` 
+
+## Préparation des données  
+* Créer une colonne qui contiendra une période combinée de l'année et du mois de la date de travail.  Et créer une colonne indice de période. 
+```{r}
+dta = mutate(dta, period=paste(dta$YR, "-", str_pad(dta$MTH, 2, pad="0"), sep=""))
+per = c(seq(1:length(unique(dta$period))), unique(dta$period))
+per = data.frame("perno" = seq(1:length(unique(dta$period))), "period" = unique(dta$period))
+per$period = as.character(per$period)
+dta = inner_join(dta,per)
+dta$CRTYR = paste("20", substr(dta$CRTDAT,2,3), sep="")
+dta$CRTMTH = substr(dta$CRTDAT,4,5)
+```
+
+* Nettoyer les variables qui contiennent des blanc au début ou à la fin des valeurs
+```{r}
+dta$DIV_NAME = trimws(dta$DIV_NAME)
+dta$TYPE = trimws(dta$TYPE)
+dta$SHOP = trimws(dta$SHOP)
+dta$TRADE = trimws(dta$TRADE)
+```
+
+* Enlever les BT test ou bidon
+```{r}
+dta = filter(dta, !(trimws(WO)==",") & !(trimws(WO)=="<") & !(trimws(WO)=="*"))
+```
+
+```{r echo=F}
+## Enregistrer les données nettoyées
+write_csv(dta, "WorkedHours_038_2016_ELECMOTEUR.csv")
+```
+## Description des données analysées
+
+Voici la liste des variables et leur structure:  
+```{r echo=F}
+str(dta)
+```
+
+Et voici quelques statistiques sur ces variables:  
+```{r echo=F}
+summary(dta)
+```
+
+
+Les divisions représentées sont:
+```{r echo=F}
+unique(paste(trimws(dta$DIV), trimws(dta$DIV_NAME), sep="-"))
+```  
+
+Les atelier-métiers représentés sont:
+```{r echo=F}
+unique(paste(trimws(dta$SHOP), trimws(dta$TRADE), sep="-"))
+```  
+
+
+## Données Statistiques
+
+```{r echo=F}
+dta_by_MTH = group_by(dta, perno)
+sum_by_MTH = summarise(dta_by_MTH, sum(HRS))
+colnames(sum_by_MTH) = c("period", "SUMHRS")
+mu = mean(sum_by_MTH$SUMHRS)
+sigma = sd(sum_by_MTH$SUMHRS)
+n = length(sum_by_MTH$SUMHRS)
+ci = mu + c(-1, 1) * qnorm(0.975) * sigma/sqrt(n)
+dev = sum_by_MTH$SUMHRS - mu
+```
+
+Taille de l'échantillon:  **`r length(dta)`** entrées de temps compilées sur **`r n`** Mois.  
+Moyenne des heures travaillées par mois:  *`r round(mu,2)`* Heures/mois.  
+Écart-type à la moyenne:  *`r round(sigma,2)`* Heures.  
+
+Modèle de distribution: Normale
+```{r echo=F}
+hdev = ggplot(sum_by_MTH, aes(x = SUMHRS))
+hdev = hdev + geom_histogram(fill = I("salmon"), binwidth=25)
+hdev = hdev + geom_vline(xintercept=mu, size = 2)
+hdev = hdev + geom_vline(xintercept=ci[1], size = 2, colour=I("green"), linetype=2)
+hdev = hdev + geom_vline(xintercept=ci[2], size = 2, colour=I("green"), linetype=2)
+hdev
+```	
+
+## Modèle de régression des heures travaillées par mois, année
+```{r}
+bm = group_by(dta, factor(YR), MTH) %>% summarise(SUMHRS=sum(HRS))
+colnames(bm) = c("YR","MTH","HRS")
+g1 = ggplot(bm, aes(as.numeric(MTH), HRS))
+g1 = g1 + geom_point()
+g1 = g1 + facet_grid(.~YR)
+g1 = g1 + geom_smooth(method=lm)
+g1 = g1 + scale_x_continuous(name="Mois", breaks=unique(bm$MTH), labels=c("J","F","M","A","M","J","J","A","S","O","N","D"))
+g1
+
+```
+
+# Volume d'émission de BT
+```{r WOIssue, cache=T}
+wos = unique(dta[,c(8,6,15,18,19)])
+wos$period = paste(wos$CRTYR, str_pad(wos$CRTMTH, 2, side=c("left"), pad="0"), sep="-")
+wos$CRTMTH = as.numeric(wos$CRTMTH)
+ibm = as.data.frame(table(wos$period))
+colnames(ibm) = c("period","freq")
+w = ggplot(ibm, aes(substr(period,6,7), freq))
+w = w + facet_grid(substr(period,1,4)~.)
+w = w + geom_point()
+w = w + geom_smooth()
+w
+
+```
+
+```{r WOISsue2, cache=T}
+## ibm_2 = aggregate(wos, CRTYR, lm(as.data.frame(table(wos$CRTYR))$Freq~unique(wos$CRTYR)))
+ibm_1 = as.data.frame(table(wos$CRTYR, wos$CRTMTH))
+colnames(ibm_1) = c("YR","MTH","freq")
+w = ggplot(ibm_1, aes(x=(MTH), y=freq))
+w = w + facet_grid(YR~.)
+w = w + geom_point()
+w = w + stat_smooth(method="lm", se=FALSE)
+w
+
+```
+
+## BT Émis par période  
+
+```{r WOIssued, cache=T, echo=F}
+##==============================
+## Work Order Details Data Load
+##==============================
+
+## Open Connection
+cx = dbConnect(drv, connURL, 'u038pbel','SEitl038')
+
+## Create temp calendar view
+sqlcmd = read_file("U:/pbellerose/~PBELLEROSE/pbellerose/2009-02-25/Mes documents/~WinSQL/SAGE/VEW_LMCALDV.sql")
+res = dbExecute(cx, sqlcmd)
+
+## Read table
+sqlcmd = read_file("U:/pbellerose/~PBELLEROSE/pbellerose/2009-02-25/Mes documents/~WinSQL/SAGE/WorkOrdersDetails.sql")
+WOD = dbGetQuery(cx, sqlcmd)
+write_csv(WOD, "WorkOrdersDetails.csv")
+
+sqlcmd = "drop view QTEMP.LMCALDV"
+res = dbExecute(cx, sqlcmd)
+
+dbDisconnect(cx)
+```
+
+### Modèle de régression des BT emis par mois
+```{r}
+bm = group_by(WOD, factor(CRTYR), CRTMTH) %>% summarise(WOs=count(WO))
+colnames(bm) = c("YR","MTH","HRS")
+g1 = ggplot(bm, aes(as.numeric(MTH), HRS))
+g1 = g1 + geom_point()
+g1 = g1 + facet_grid(.~YR)
+g1 = g1 + geom_smooth(method=lm)
+g1 = g1 + scale_x_continuous(name="Mois", breaks=unique(bm$MTH), labels=c("J","F","M","A","M","J","J","A","S","O","N","D"))
+g1
+
+```

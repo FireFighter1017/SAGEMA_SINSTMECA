@@ -1,0 +1,260 @@
+---
+title: "Étude sur la capacité SINST-MECA"
+author: "Pascal Bellerose"
+date: "June 29, 2017"
+output: 
+  html_document:
+    fig_width: 12
+    fig_height: 4
+params:
+  user: ""
+  pwd: ""
+  shop: "SINST"
+  trade: "MECA"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+# ---- init ----
+options(java.parameters = "-Xmx8G")
+
+library(data.table)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+
+library(readr)
+library(stringr)
+library(manipulate)
+library(GGally)
+library(MASS)
+library(tidyverse)
+library(readxl)
+library(caret)
+library(Hmisc)
+
+library(RODBC)
+library(RJDBC)
+
+```
+
+```{r WOD2LoadFromFile, cache=TRUE, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+# ---- WOD2LoadFromFile
+  colcls = load('WODTidy_colcls.RData')
+  
+  WOD = fread("WODTidy.csv", 
+              # stringsAsFactors=TRUE, 
+              header=TRUE, 
+              # colClasses = list(factor=c(38,70)),
+              colClasses = colcls,
+              encoding='UTF-8')  
+```
+
+```{r WOD2Filter, echo=FALSE}
+
+  WOD_filteredOnST = WOD[trimws(WOD$DJBSCD) %in% params$shop & 
+                         trimws(WOD$DJBUCD) %in% params$trade,]
+  WOD2 = filter(WOD_filteredOnST, as.numeric(CRTYR) > n_distinct(CRTYR) - 6)
+  fwrite(WOD2, 'WOD2tidy.csv')
+  colcls = sapply(WOD2, class)
+  save(list=colcls, file='WOD2Tidy_colcls.RData')
+  
+```
+
+## Statistiques de BT émis  
+### En nombre  
+```{r WOD2plot_CountbyWeek}
+  ## === WO Issued by year, week ===
+  
+  ## Data preparation
+  gdf = WOD2
+  gdf = gdf[order(gdf$CRTYR,gdf$CRTWK),]
+  gdf = group_by(gdf, CRTYR, as.numeric(CRTMTH), as.numeric(CRTWK)) %>% summarise(total=sum(!is.na(BOKEYX)))
+  colnames(gdf) = c('YR','MTH','WK','total')
+  
+  ## Plotting data
+  gdf = gdf[gdf$WK < week(now()),]
+  g1 = ggplot(gdf, aes(WK, total))
+  g1 = g1 + geom_point()
+  g1 = g1 + facet_grid(.~as.numeric(as.character(YR)))
+  g1 = g1 + geom_smooth(method=glm)
+  g1 = g1 + scale_x_continuous(name="Semaines",
+                               breaks=gdf$WK,
+                               labels=gdf$WK
+                               )
+  g1 = g1 + labs(title='Nombre de BT émis par année/semaine.',
+                 subtitle=paste('Semaines', min(gdf$WK), 'à', max(gdf$WK), sep=' '),
+                 y='Nb. de BT')
+  g1 = g1 + theme(axis.text.x = element_text(size=6))
+  g1
+```
+  
+### En heures
+```{r WOD2plot_HoursbyWeek}
+  ## === Hours Issued by year, week ===
+  
+  ## Data preparation
+  gdf = WOD2
+  gdf = gdf[order(gdf$CRTYR,gdf$CRTWK),]
+  gdf = group_by(gdf, CRTYR, as.numeric(CRTWK), prevYN) %>% summarise(tothrs=sum(DJEWNB))
+  colnames(gdf) = c('YR','WK','prevYN','total')
+  gdf$perno = as.numeric(as.character(gdf$YR))*100+gdf$WK
+  
+  
+  ## Plotting data
+  gdf = gdf[gdf$WK < week(now()),]
+  g1 = ggplot(gdf, aes(WK, total))
+  g1 = g1 + geom_point()
+  g1 = g1 + facet_grid(.~as.numeric(as.character(YR)))
+  g1 = g1 + geom_smooth(method=lm)
+  g1 = g1 + scale_x_continuous(name="Semaines",
+                               breaks=gdf$WK,
+                               labels=gdf$WK
+                               )
+  g1 = g1 + labs(title='Total d\'heures émis par année/semaine.',
+                 subtitle=paste('Semaines', min(gdf$WK), 'à', max(gdf$WK), '.  Basé sur les heures estimées.', sep=' '),
+                 y='Heures')
+  g1 = g1 + theme(axis.text.x = element_text(size=6))
+  g1 = g1 + guides(col=as.numeric(gdf$prevYN)+1)
+  g1
+  
+  gdf = group_by(WOD2, CRTYR) %>% summarise(Moy=mean(DJEWNB), Var=sqrt(sd(DJEWNB)))
+  colnames(gdf)[1] = "Année"
+  gdf$Moy = round(gdf$Moy, 1)
+  gdf$Var = round(gdf$Var, 1)
+```
+
+  
+  Dans les graphiques précédents, on peut constater une baisse en 2017.  En fait, on pourrait croire que la tendance de 2016 se poursuit en 2017.  Dans le tableau qui suit, on peut constater que pour la distribution qui affiche une variation plus faible en 2017 que les autres années.
+  
+```{r}
+  knitr::kable(gdf, format="html", caption="Statistiques", padding=4)
+```
+ 
+
+***  
+  
+## Émission des préventifs  
+### En nombre  
+```{r WOD2plot_PMCountbyWeek}
+  ## === WO Issued by year, week ===
+  
+  ## Data preparation
+  gdf = WOD2[WOD2$prevYN==1,]
+  gdf = group_by(gdf, DUEYR, as.numeric(DUEWK)) %>% summarise(tothrs=sum(!is.na(BOKEYX)))
+  colnames(gdf) = c('YR','WK','tothrs')
+  gdf$perno = as.numeric(as.character(gdf$YR))*100+gdf$WK
+  
+  ## Plotting data
+  gdf = gdf[gdf$WK < week(now()),]
+  g1 = ggplot(gdf, aes(WK, tothrs))
+  g1 = g1 + geom_point()
+  g1 = g1 + facet_grid(.~YR)
+  g1 = g1 + geom_smooth(method=lm)
+  g1 = g1 + scale_x_continuous(name="Semaines",
+                               breaks=gdf$WK,
+                               labels=gdf$WK
+                               )
+  g1 = g1 + labs(title='Nombre de BT émis par année/semaine.',
+                 subtitle=paste('Semaines', min(gdf$WK), 'à', max(gdf$WK), sep=' '),
+                 y='Nb. de BT')
+  g1 = g1 + theme(axis.text.x = element_text(size=6))
+  g1
+```
+  
+### En heures
+```{r WOD2plot_PMHoursbyWeek}
+  ## === Hours Issued by year, week ===
+  
+  ## Data preparation
+  gdf = WOD2[WOD2$prevYN==1,]
+  gdf = gdf[order(gdf$DUEYR,gdf$DUEWK),]
+  gdf = group_by(gdf, DUEYR, as.numeric(DUEWK), prevYN) %>% summarise(tothrs=sum(DJEWNB))
+  colnames(gdf) = c('YR','WK','prevYN','tothrs')
+  gdf$perno = as.numeric(as.character(gdf$YR))*100+gdf$WK
+  
+  
+  ## Plotting data
+  gdf = gdf[gdf$WK < week(now()),]
+  g1 = ggplot(gdf, aes(WK, tothrs))
+  g1 = g1 + geom_point()
+  g1 = g1 + facet_grid(. ~ YR)
+  g1 = g1 + geom_smooth(method=lm)
+  g1 = g1 + scale_x_continuous(name="Semaines",
+                               breaks=gdf$WK,
+                               labels=gdf$WK
+                               )
+  g1 = g1 + labs(title='Total d\'heures émis par année/semaine.',
+                 subtitle=paste('Semaines', min(gdf$WK), 'à', max(gdf$WK), sep=' '),
+                 y='Heures')
+  g1 = g1 + theme(axis.text.x = element_text(size=6))
+  g1 = g1 + guides(col=as.numeric(gdf$prevYN)+1)
+  g1
+```
+
+#### Différentiel plan de préventif vs. émission réelle des préventifs (Heures)  
+
+```{r pmp}
+
+  # ---- pmpLoadFromFile ----
+  colcls = load('PPMProgram_colcls.RData')
+  
+  pmp = fread("PPMProgram.csv", 
+              # stringsAsFactors=TRUE, 
+              header=TRUE, 
+              # colClasses = list(factor=c(38,70)),
+              colClasses = colcls,
+              encoding='UTF-8')   
+  
+  # ---- pmpFilter ----
+  gdfPM = pmp[trimws(pmp$ATE)=='SINST' & trimws(pmp$MET)=='MECA',]
+  
+  # ---- pmpPlot ----
+  gdfPM = group_by(gdfPM, YEAR, WEEKNO) %>% summarise(PMTOT=sum(EST_TIME))
+  gdfPM$PMTOT[is.na(gdfPM$PMTOT)] = 0
+  
+
+  # ---- pmreal ----
+  gdf = WOD2[WOD2$prevYN==1 & WOD2$DUEYR==2017,]
+  
+  gdf = gdf[order(gdf$DUEYR,gdf$DUEWK),]
+  gdf = group_by(gdf, DUEYR, as.numeric(DUEWK)) %>% summarise(REELTOT=sum(DJEWNB))
+  colnames(gdf) = c('YEAR','WEEKNO','REELTOT')
+  gdf$REELTOT[is.na(gdf$REELTOT)] = 0
+  
+  ## Jointure du plan de maintenance avec le backlog PM observé
+  gdf$YEAR = as.numeric(as.character(gdf$YEAR))
+  pmresid = full_join(gdfPM, gdf)
+  pmresid$PMTOT[is.na(pmresid$PMTOT)] = 0
+  pmresid$REELTOT[is.na(pmresid$REELTOT)] = 0
+
+  pmresid$res = pmresid$PMTOT-pmresid$REELTOT
+  plot(as.numeric(row.names(pmresid)), pmresid$res)
+  g1 = ggplot(pmresid, aes(x=WEEKNO))
+  g1 = g1 + geom_line(aes(y=PMTOT), colour='green')
+  g1 = g1 + geom_line(aes(y=REELTOT), colour='red')
+  g1 = g1 + geom_line(aes(y=sqrt(res^2)))
+  g1 = g1 + geom_hline(yintercept=sqrt(sd(pmresid$res)))
+  g1
+
+```
+
+
+```{r eval=FALSE}
+## Liste des taches PM exécutés pour d'autresd Ate-Met
+
+PM = pmp
+REEL = WOD2[WOD2$prevYN==1,]
+REEL$BOACCD = trimws(as.character(REEL$BOACCD))
+PM$TACHE= trimws(PM$TACHE)
+PM$EQ = trimws(PM$EQ)
+
+test2 = inner_join(PM, REEL, by=c('EQ'='BOACCD','TACHE'='BOJ1CD'))
+stswitch = test2[!trimws(test2$ATE)==trimws(test2$DJBSCD),]
+gsw = group_by(stswitch, DUEYR, as.numeric(DUEWK), EQ, TACHE, ATE, MET)
+gsw = summarise(gsw, total=sum(!is.na(EQ)))
+colnames(gsw)[2] = 'DUEWK' 
+
+```
+
